@@ -123,6 +123,12 @@ elif [ -n "$used_int" ] && [ "$used_int" -ge 50 ] 2>/dev/null; then
   ctx_color="$C_ORANGE"
 fi
 
+# handoff reminder: warn at 100k tokens
+handoff_warn=0
+if [ -n "$ctx_used" ] && [ "$ctx_used" -ge 100000 ] 2>/dev/null; then
+  handoff_warn=1
+fi
+
 # 5h usage: yellow >= 50%, red >= 75%
 five_h_color="$C_SEC"
 if [ -n "$five_h" ]; then
@@ -170,6 +176,9 @@ if [ -n "$ctx_str" ]; then
   printf "${PIPE}"
   printf "${ctx_color}ctx %s${R}" "$ctx_str"
   [ -n "$ctx_tokens_str" ] && printf " ${DIM}${C_MUTED}(%s)${R}" "$ctx_tokens_str"
+  if [ "$handoff_warn" -eq 1 ] 2>/dev/null; then
+    printf " ${C_WARN}→ handoff soon${R}"
+  fi
 fi
 if [ -n "$issue_count" ] && [ "$issue_count" -gt 0 ] 2>/dev/null; then
   printf "${PIPE}"
