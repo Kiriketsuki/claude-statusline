@@ -72,9 +72,13 @@ compute_delta() {
   fi
 }
 
-# --- gradient_text: Chrysaki Jewel gradient ---
-# Interpolates Emerald Lt (#1a8a6a) -> Royal Blue Lt (#1c3d7a) -> Amethyst Lt (#583090)
-# across each character. Caller must reset (\033[0m) when done.
+# --- gradient_text: Chrysaki Jewel animated gradient (left-to-right flow) ---
+# 4-stop seamless loop: Emerald Lt -> Royal Blue Lt -> Amethyst Lt -> Royal Blue Lt -> Emerald Lt
+# Characters span 200 of the 400-unit cycle; phase shifts the window each render.
+# Compute grad_phase once before calling (shared across all fields for in-sync animation).
+# Full cycle: 400 units / 6 units per second ≈ 67s. Colors flow left-to-right.
+# To reverse direction: replace (... + grad_phase) with (... + 400 - grad_phase).
+# Caller must reset (\033[0m) when done.
 gradient_text() {
   local text="$1"
   local len="${#text}"
@@ -85,17 +89,30 @@ gradient_text() {
   local span=$(( len > 1 ? len - 1 : 1 ))
   local i=0 t s r g b
   while [ "$i" -lt "$len" ]; do
-    t=$(( i * 100 / span ))
-    if [ "$t" -le 50 ]; then
-      s=$(( t * 2 ))
-      r=$(( r1 + (r2 - r1) * s / 100 ))
-      g=$(( g1 + (g2 - g1) * s / 100 ))
-      b=$(( b1 + (b2 - b1) * s / 100 ))
-    else
-      s=$(( (t - 50) * 2 ))
+    t=$(( (i * 200 / span + grad_phase) % 400 ))
+    if [ "$t" -lt 100 ]; then
+      # Emerald Lt -> Royal Blue Lt
+      r=$(( r1 + (r2 - r1) * t / 100 ))
+      g=$(( g1 + (g2 - g1) * t / 100 ))
+      b=$(( b1 + (b2 - b1) * t / 100 ))
+    elif [ "$t" -lt 200 ]; then
+      # Royal Blue Lt -> Amethyst Lt
+      s=$(( t - 100 ))
       r=$(( r2 + (r3 - r2) * s / 100 ))
       g=$(( g2 + (g3 - g2) * s / 100 ))
       b=$(( b2 + (b3 - b2) * s / 100 ))
+    elif [ "$t" -lt 300 ]; then
+      # Amethyst Lt -> Royal Blue Lt
+      s=$(( t - 200 ))
+      r=$(( r3 + (r2 - r3) * s / 100 ))
+      g=$(( g3 + (g2 - g3) * s / 100 ))
+      b=$(( b3 + (b2 - b3) * s / 100 ))
+    else
+      # Royal Blue Lt -> Emerald Lt
+      s=$(( t - 300 ))
+      r=$(( r2 + (r1 - r2) * s / 100 ))
+      g=$(( g2 + (g1 - g2) * s / 100 ))
+      b=$(( b2 + (b1 - b2) * s / 100 ))
     fi
     printf "\033[38;2;%d;%d;%dm%s" "$r" "$g" "$b" "${text:$i:1}"
     i=$(( i + 1 ))
@@ -168,6 +185,10 @@ if [ -n "$five_h" ]; then
     five_h_color="$C_WARN"
   fi
 fi
+
+# --- animation phase (shared across all gradient_text calls this render) ---
+# 6 units/second, 400-unit full cycle ≈ 67s. All fields animate in lockstep.
+grad_phase=$(( ($(date +%s) * 6) % 400 ))
 
 # --- assemble output ---
 SEP="${C_MUTED} • ${R}"
