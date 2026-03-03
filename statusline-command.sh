@@ -8,6 +8,16 @@ case "$(uname -s 2>/dev/null)" in
     ;;
 esac
 
+# --- accessibility flags ---
+# NO_COLOR (https://no-color.org/): when set and non-zero, disable all ANSI colour
+if [ -n "${NO_COLOR-}" ] && [ "${NO_COLOR}" != "0" ]; then
+  NO_COLOUR=1
+else
+  NO_COLOUR=0
+fi
+# CHRYSAKI_NO_ANIMATE: when set and non-zero, freeze all animation phases
+CHRYSAKI_NO_ANIMATE="${CHRYSAKI_NO_ANIMATE:-0}"
+
 input=$(cat)
 
 # --- model ---
@@ -100,6 +110,7 @@ gradient_text() {
   local text="$1" len i t s r g b span
   len="${#text}"
   [ "$len" -eq 0 ] && return
+  if [ "$NO_COLOUR" -eq 1 ]; then printf "%s" "$text"; return; fi
   local r1=26  g1=138 b1=106   # #1a8a6a Emerald Lt
   local r2=28  g2=61  b2=122   # #1c3d7a Royal Blue Lt
   local r3=88  g3=48  b3=144   # #583090 Amethyst Lt
@@ -132,6 +143,7 @@ gradient_text_off() {
   local len i t s r g b span
   len="${#text}"
   [ "$len" -eq 0 ] && return
+  if [ "$NO_COLOUR" -eq 1 ]; then printf "%s" "$text"; return; fi
   local r1=26  g1=138 b1=106
   local r2=28  g2=61  b2=122
   local r3=88  g3=48  b3=144
@@ -189,32 +201,37 @@ progress_bar() {
   [ "$filled" -gt 8 ] && filled=8
   [ "$filled" -lt 0 ] && filled=0
 
+  # Colour prefix for filled positions (empty when NO_COLOUR)
+  local cfill=""
+  [ "$NO_COLOUR" -eq 0 ] && cfill=$(printf "\033[38;2;%d;%d;%dm" "$fr" "$fg" "$fb")
+
   i=0
   while [ "$i" -lt 8 ]; do
     case "${BAR_STYLE:-hex}" in
       diamond)
-        if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x97\x86" "$fr" "$fg" "$fb"   # ◆
-        else printf "%b\xe2\x97\x87" "$C_HEX_EMPTY"; fi ;;                                             # ◇
+        if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x97\x86" "$cfill"           # ◆
+        else printf "%b\xe2\x97\x87" "$C_HEX_EMPTY"; fi ;;                          # ◇
       circle)
-        if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x97\x8f" "$fr" "$fg" "$fb"   # ●
-        else printf "%b\xe2\x97\x8b" "$C_HEX_EMPTY"; fi ;;                                             # ○
+        if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x97\x8f" "$cfill"           # ●
+        else printf "%b\xe2\x97\x8b" "$C_HEX_EMPTY"; fi ;;                          # ○
       wave)
         # Alternating ▲▼ tiling trapezoid effect.
-        # wave_shift (global, 0 or 1) scrolls pattern left/right for animation.
-        local wpos=$(( (i + wave_shift) % 2 ))
-        if [ "$wpos" -eq 0 ]; then
-          if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\xb2" "$fr" "$fg" "$fb"  # ▲ bright
-          else printf "%b\xe2\x96\xb2" "$C_HEX_EMPTY"; fi                                              # ▲ dim
+        # wave_shift (global, 0-3) creates 4-phase scroll for smoother motion.
+        # wpos % 2 selects glyph: 0 = up triangle, 1 = down triangle.
+        local wpos=$(( (i + wave_shift) % 4 ))
+        if [ $(( wpos % 2 )) -eq 0 ]; then
+          if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xb2" "$cfill"         # ▲ bright
+          else printf "%b\xe2\x96\xb2" "$C_HEX_EMPTY"; fi                           # ▲ dim
         else
-          if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\xbc" "$fr" "$fg" "$fb"  # ▼ bright
-          else printf "%b\xe2\x96\xbc" "$C_HEX_EMPTY"; fi                                              # ▼ dim
+          if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xbc" "$cfill"         # ▼ bright
+          else printf "%b\xe2\x96\xbc" "$C_HEX_EMPTY"; fi                           # ▼ dim
         fi ;;
       block)
-        if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\x88" "$fr" "$fg" "$fb"   # █
-        else printf "%b\xe2\x96\x91" "$C_HEX_EMPTY"; fi ;;                                             # ░
+        if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\x88" "$cfill"           # █
+        else printf "%b\xe2\x96\x91" "$C_HEX_EMPTY"; fi ;;                          # ░
       *)  # hex (default)
-        if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\xac\xa2" "$fr" "$fg" "$fb"   # ⬢
-        else printf "%b\xe2\xac\xa1" "$C_HEX_EMPTY"; fi ;;                                             # ⬡
+        if [ "$i" -lt "$filled" ]; then printf "%s\xe2\xac\xa2" "$cfill"           # ⬢
+        else printf "%b\xe2\xac\xa1" "$C_HEX_EMPTY"; fi ;;                          # ⬡
     esac
     i=$(( i + 1 ))
   done
@@ -256,26 +273,32 @@ if [ -n "$used" ]; then
 fi
 
 # --- Chrysaki colour palette ---
-R="\033[0m"
-DIM="\033[2m"
-BOLD="\033[1m"
+if [ "$NO_COLOUR" -eq 1 ]; then
+  R="" DIM="" BOLD=""
+  C_BLONDE_LT="" C_TEAL="" C_EMERALD_LT="" C_ORANGE=""
+  C_SEC="" C_MUTED="" C_WARN="" C_ERROR="" C_HEX_EMPTY=""
+else
+  R="\033[0m"
+  DIM="\033[2m"
+  BOLD="\033[1m"
 
-# Identity colours
-C_BLONDE_LT="\033[38;2;208;184;80m"   # #d0b850 Blonde Light  -- unsynced commits
-C_TEAL="\033[38;2;30;136;152m"         # #1e8898 Teal          -- ctx (normal), issues
-C_EMERALD_LT="\033[38;2;26;138;106m"  # #1a8a6a Emerald Light -- 5h normal, inbox
-C_ORANGE="\033[38;5;208m"              # Terminal orange       -- ctx warning
+  # Identity colours
+  C_BLONDE_LT="\033[38;2;208;184;80m"   # #d0b850 Blonde Light  -- unsynced commits
+  C_TEAL="\033[38;2;30;136;152m"         # #1e8898 Teal          -- ctx (normal), issues
+  C_EMERALD_LT="\033[38;2;26;138;106m"  # #1a8a6a Emerald Light -- 5h normal, inbox
+  C_ORANGE="\033[38;5;208m"              # Terminal orange       -- ctx warning
 
-# Text hierarchy
-C_SEC="\033[38;2;160;164;184m"         # #a0a4b8 Secondary     -- 7d normal
-C_MUTED="\033[38;2;106;110;130m"       # #6a6e82 Muted         -- separators, reset timers
+  # Text hierarchy
+  C_SEC="\033[38;2;160;164;184m"         # #a0a4b8 Secondary     -- 7d normal
+  C_MUTED="\033[38;2;106;110;130m"       # #6a6e82 Muted         -- separators, reset timers
 
-# Alert thresholds
-C_WARN="\033[38;2;184;160;56m"         # #b8a038 Blonde        -- >=50% warning
-C_ERROR="\033[38;2;192;64;80m"         # #c04050 Error         -- >=75%/128k critical
+  # Alert thresholds
+  C_WARN="\033[38;2;184;160;56m"         # #b8a038 Blonde        -- >=50% warning
+  C_ERROR="\033[38;2;192;64;80m"         # #c04050 Error         -- >=75%/128k critical
 
-# Bar empty-position colour
-C_HEX_EMPTY="\033[38;2;64;70;90m"     # #40465a -- dim background positions
+  # Bar empty-position colour
+  C_HEX_EMPTY="\033[38;2;64;70;90m"     # #40465a -- dim background positions
+fi
 
 # --- threshold colour logic ---
 # ctx: Teal (normal) / orange (>=50%) / red (>=128k tokens)
@@ -295,25 +318,70 @@ handoff_warn=0
 [ -n "$ctx_used" ] && [ "$ctx_used" -ge 100000 ] 2>/dev/null && handoff_warn=1
 
 # 5h usage: Emerald (normal) / Blonde (>=50%) / Ruby (>=75%)
+# When in warning/critical, threshold pulse modulates brightness via sine wave
 five_h_color="$C_EMERALD_LT"
+five_h_pulse=0   # 0 = static, 1 = pulsing
 if [ -n "$five_h" ]; then
-  if   [ "$five_h" -ge 75 ] 2>/dev/null; then five_h_color="$C_ERROR"
-  elif [ "$five_h" -ge 50 ] 2>/dev/null; then five_h_color="$C_WARN"
+  if   [ "$five_h" -ge 75 ] 2>/dev/null; then five_h_color="$C_ERROR"; five_h_pulse=1
+  elif [ "$five_h" -ge 50 ] 2>/dev/null; then five_h_color="$C_WARN";  five_h_pulse=1
   fi
 fi
 
 # 7d usage: Secondary (normal) / Blonde (>=50%) / Ruby (>=75%)
 seven_d_color="$C_SEC"
+seven_d_pulse=0
 if [ -n "$seven_d" ]; then
-  if   [ "$seven_d" -ge 75 ] 2>/dev/null; then seven_d_color="$C_ERROR"
-  elif [ "$seven_d" -ge 50 ] 2>/dev/null; then seven_d_color="$C_WARN"
+  if   [ "$seven_d" -ge 75 ] 2>/dev/null; then seven_d_color="$C_ERROR"; seven_d_pulse=1
+  elif [ "$seven_d" -ge 50 ] 2>/dev/null; then seven_d_color="$C_WARN";  seven_d_pulse=1
   fi
 fi
 
 # --- animation phase (shared across all gradient_text calls this render) ---
 # 6 units/second, 400-unit full cycle ~67s.
-grad_phase=$(( ($(date +%s) * 6) % 400 ))
-wave_shift=$(( ($(date +%s) / 2) % 2 ))   # 0 or 1, shifts wave pattern every 2 seconds
+if [ "$CHRYSAKI_NO_ANIMATE" != "0" ]; then
+  grad_phase=0
+  wave_shift=0
+  badge_tick=0
+else
+  grad_phase=$(( ($(date +%s) * 6) % 400 ))
+  wave_shift=$(( ($(date +%s) / 2) % 4 ))   # 0-3, 4-phase wave scroll for smoother motion
+fi
+
+# --- threshold pulse: sine-wave brightness modulation for warning/critical sections ---
+# 8-step sine lookup (scaled -100..+100); 1 step/sec = ~8s full cycle
+sine8=(0 71 100 71 0 -71 -100 -71)
+if [ "$CHRYSAKI_NO_ANIMATE" != "0" ]; then
+  pulse_scale=100
+else
+  pulse_idx=$(( $(date +%s) % 8 ))
+  pulse_scale=$(( 85 + 15 * ${sine8[$pulse_idx]} / 100 ))   # range ~70-100
+fi
+
+# pulse_color: apply pulse_scale to an RGB colour, emit ANSI escape
+# Usage: pulse_color R G B -> prints \033[38;2;r;g;bm (scaled)
+pulse_color() {
+  local pr=$(( $1 * pulse_scale / 100 ))
+  local pg=$(( $2 * pulse_scale / 100 ))
+  local pb=$(( $3 * pulse_scale / 100 ))
+  printf "\033[38;2;%d;%d;%dm" "$pr" "$pg" "$pb"
+}
+
+# Pre-compute pulsed colour escapes for 5h/7d sections
+# Base RGB: C_WARN=#b8a038 (184,160,56)  C_ERROR=#c04050 (192,64,80)
+if [ "$five_h_pulse" -eq 1 ] && [ "$NO_COLOUR" -eq 0 ]; then
+  if [ -n "$five_h" ] && [ "$five_h" -ge 75 ] 2>/dev/null; then
+    five_h_color=$(pulse_color 192 64 80)
+  else
+    five_h_color=$(pulse_color 184 160 56)
+  fi
+fi
+if [ "$seven_d_pulse" -eq 1 ] && [ "$NO_COLOUR" -eq 0 ]; then
+  if [ -n "$seven_d" ] && [ "$seven_d" -ge 75 ] 2>/dev/null; then
+    seven_d_color=$(pulse_color 192 64 80)
+  else
+    seven_d_color=$(pulse_color 184 160 56)
+  fi
+fi
 
 # --- terminal width ---
 COLS=$(tput cols 2>/dev/null || echo 80)
@@ -349,7 +417,8 @@ fi
 
 # --- model badge: shape encodes model tier, pulses solid/outline every 2 seconds ---
 # Haiku = ▲/△ (triangle, 3)  Sonnet = ⬟/⬠ (pentagon, 5)  Opus = ⬢/⬡ (hexagon, 6)
-badge_tick=$(( ($(date +%s) / 2) % 2 ))
+# badge_tick already set in animation-phase block (frozen or live)
+[ -z "$badge_tick" ] && badge_tick=$(( ($(date +%s) / 2) % 2 ))
 model_lower=$(printf "%s" "$model" | tr '[:upper:]' '[:lower:]')
 if [ "$badge_tick" -eq 0 ]; then
   case "$model_lower" in
@@ -486,7 +555,14 @@ if [ -n "$ctx_str" ]; then
   [ "$ctx_pad" -gt 0 ] && printf "%*s" "$ctx_pad" ""
   if [ "$handoff_warn" -eq 1 ]; then
     printf "$DIV" "$C_MUTED" "$R"
-    printf "%b\xe2\xac\xa2 \xe2\x86\x92 handoff%b" "$C_WARN" "$R"
+    # Handoff beacon: alternates solid/outline hexagon + bright/dim every 2s
+    if [ "$badge_tick" -eq 0 ]; then
+      printf "%b\xe2\xac\xa2 \xe2\x86\x92 handoff%b" "$C_WARN" "$R"             # ⬢ solid, bright
+    elif [ "$NO_COLOUR" -eq 1 ]; then
+      printf "\xe2\xac\xa1 \xe2\x86\x92 handoff"                                 # ⬡ outline, no colour
+    else
+      printf "\033[38;2;110;96;34m\xe2\xac\xa1 \xe2\x86\x92 handoff%b" "$R"      # ⬡ outline, dim
+    fi
   fi
   if [ -n "$ver_current" ]; then
     printf "$DIV" "$C_MUTED" "$R"
