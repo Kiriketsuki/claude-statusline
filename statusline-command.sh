@@ -195,8 +195,9 @@ progress_bar() {
         else printf "%b\xe2\x97\x8b" "$C_HEX_EMPTY"; fi ;;                                             # ○
       wave)
         # Alternating ▲▼ tiling trapezoid effect.
-        # Same char for filled and empty -- only colour differs (no size mismatch).
-        if [ $(( i % 2 )) -eq 0 ]; then
+        # wave_shift (global, 0 or 1) scrolls pattern left/right for animation.
+        local wpos=$(( (i + wave_shift) % 2 ))
+        if [ "$wpos" -eq 0 ]; then
           if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\xb2" "$fr" "$fg" "$fb"  # ▲ bright
           else printf "%b\xe2\x96\xb2" "$C_HEX_EMPTY"; fi                                              # ▲ dim
         else
@@ -307,12 +308,59 @@ fi
 # --- animation phase (shared across all gradient_text calls this render) ---
 # 6 units/second, 400-unit full cycle ~67s.
 grad_phase=$(( ($(date +%s) * 6) % 400 ))
+wave_shift=$(( ($(date +%s) / 2) % 2 ))   # 0 or 1, shifts wave pattern every 2 seconds
 
 # --- terminal width ---
 COLS=$(tput cols 2>/dev/null || echo 80)
 
 # --- bar style (override via CHRYSAKI_BAR_STYLE env var) ---
 BAR_STYLE="${CHRYSAKI_BAR_STYLE:-wave}"
+
+# Pre-compute deltas and section widths for cross-line | alignment
+delta5="" delta7=""
+[ -n "$five_h_reset" ] && delta5=$(compute_delta "$five_h_reset")
+[ -n "$seven_d_reset" ] && delta7=$(compute_delta "$seven_d_reset")
+
+five_h_sec_w=0
+if [ -n "$five_h" ]; then
+  five_h_pct_str=$(printf "%2d%%" "$five_h")
+  five_h_sec_w=$(( 8 + 8 + 2 + ${#five_h_pct_str} ))
+  [ -n "$delta5" ] && five_h_sec_w=$(( five_h_sec_w + 2 + 1 + ${#delta5} + 1 ))
+fi
+
+ctx_sec_w=0
+if [ -n "$ctx_str" ]; then
+  ctx_pct_str=$(printf "%2d%%" "$used_int")
+  ctx_sec_w=$(( 8 + 8 + 2 + ${#ctx_pct_str} ))
+  [ -n "$ctx_tokens_str" ] && ctx_sec_w=$(( ctx_sec_w + 2 + 1 + ${#ctx_tokens_str} + 1 ))
+fi
+
+if   [ "$five_h_sec_w" -gt 0 ] && [ "$ctx_sec_w" -gt 0 ]; then
+  first_w=$(( five_h_sec_w > ctx_sec_w ? five_h_sec_w : ctx_sec_w ))
+elif [ "$five_h_sec_w" -gt 0 ]; then first_w="$five_h_sec_w"
+elif [ "$ctx_sec_w"    -gt 0 ]; then first_w="$ctx_sec_w"
+else                                  first_w=0
+fi
+
+# --- model badge: shape encodes model tier, pulses solid/outline every 2 seconds ---
+# Haiku = ▲/△ (triangle, 3)  Sonnet = ⬟/⬠ (pentagon, 5)  Opus = ⬢/⬡ (hexagon, 6)
+badge_tick=$(( ($(date +%s) / 2) % 2 ))
+model_lower=$(printf "%s" "$model" | tr '[:upper:]' '[:lower:]')
+if [ "$badge_tick" -eq 0 ]; then
+  case "$model_lower" in
+    *haiku*)  model_badge="\xe2\x96\xb2" ;;   # ▲ solid triangle  (U+25B2)
+    *sonnet*) model_badge="\xe2\xac\x9f" ;;   # ⬟ solid pentagon  (U+2B1F)
+    *opus*)   model_badge="\xe2\xac\xa2" ;;   # ⬢ solid hexagon   (U+2B22)
+    *)        model_badge="\xe2\x97\x86" ;;   # ◆ solid diamond   (U+25C6)
+  esac
+else
+  case "$model_lower" in
+    *haiku*)  model_badge="\xe2\x96\xb3" ;;   # △ outline triangle (U+25B3)
+    *sonnet*) model_badge="\xe2\xac\xa0" ;;   # ⬠ outline pentagon (U+2B20)
+    *opus*)   model_badge="\xe2\xac\xa1" ;;   # ⬡ outline hexagon  (U+2B21)
+    *)        model_badge="\xe2\x97\x87" ;;   # ◇ outline diamond  (U+25C7)
+  esac
+fi
 
 # ==========================================================================
 # Line 1: Brand Bar
@@ -366,7 +414,8 @@ done
 # Render Line 1 with continuous gradient flowing across all segments
 printf "%b" "$BOLD"
 goff=0
-gradient_text_off " ━━  ⬢ " "$goff" "$total_grad";      goff=$(( goff + L1_PREFIX_LEN ))
+l1_prefix=$(printf " ━━  %b " "$model_badge")   # dynamic badge, still 7 display cols
+gradient_text_off "$l1_prefix" "$goff" "$total_grad";   goff=$(( goff + L1_PREFIX_LEN ))
 gradient_text_off "$model"   "$goff" "$total_grad";      goff=$(( goff + model_len ))
 gradient_text_off "  "       "$goff" "$total_grad";      goff=$(( goff + 2 ))
 gradient_text_off "$bridge_str" "$goff" "$total_grad";   goff=$(( goff + bridge_n ))
@@ -394,19 +443,19 @@ DIV="  %b\xe2\x94\x82%b  "   # printf template: pass C_MUTED and R as args
 
 # ==========================================================================
 # Line 2: Usage Metrics
-# Layout:  " ▰ 5h   [bar]  %2d%  (delta   )  │  ▰ 7d   [bar]  %2d%  (delta   )"
-# Label fields are 3-char wide; delta is padded to %-9s for fixed column width.
+# Layout:  " ▰ 5h   [bar]  27%  (3h 59m)  [pad]  │  ▰ 7d   [bar]  52%  (4d 18h)"
+# First section padded to first_w (max of 5h/ctx section widths) for │ alignment.
+# Delta and percentage use the same colour as the section's usage indicator.
 # ==========================================================================
 printf "\n"
 if [ -n "$five_h" ]; then
   five_h_marker=$(section_marker "$five_h" 50 75)
   printf "%b %s 5h   %b" "$five_h_color" "$five_h_marker" "$R"
   progress_bar "$five_h" 26 138 106 50 184 160 56 75 192 64 80
-  printf "  %b%2d%%%b" "$five_h_color" "$five_h" "$R"
-  if [ -n "$five_h_reset" ]; then
-    delta=$(compute_delta "$five_h_reset")
-    [ -n "$delta" ] && printf "  %b(%s)%b" "$C_MUTED" "$delta" "$R"
-  fi
+  printf "  %b%s%b" "$five_h_color" "$five_h_pct_str" "$R"
+  [ -n "$delta5" ] && printf "  %b(%s)%b" "$five_h_color" "$delta5" "$R"
+  five_h_pad=$(( first_w - five_h_sec_w ))
+  [ "$five_h_pad" -gt 0 ] && printf "%*s" "$five_h_pad" ""
 fi
 if [ -n "$seven_d" ]; then
   [ -n "$five_h" ] && printf "$DIV" "$C_MUTED" "$R"
@@ -414,40 +463,40 @@ if [ -n "$seven_d" ]; then
   printf "%b %s 7d   %b" "$seven_d_color" "$seven_d_marker" "$R"
   progress_bar "$seven_d" 160 164 184 50 184 160 56 75 192 64 80
   printf "  %b%2d%%%b" "$seven_d_color" "$seven_d" "$R"
-  if [ -n "$seven_d_reset" ]; then
-    delta=$(compute_delta "$seven_d_reset")
-    [ -n "$delta" ] && printf "  %b(%s)%b" "$C_MUTED" "$delta" "$R"
-  fi
+  [ -n "$delta7" ] && printf "  %b(%s)%b" "$seven_d_color" "$delta7" "$R"
 fi
 
 # ==========================================================================
 # Line 3: Context + Status
-# Layout:  " ▰ ctx  [bar]  %2d%  (tokens)  [⬢ handoff]  │  v2.1.63  │  ◈ N  │  ◇ N"
+# Layout:  " ▰ ctx  [bar]  77%  (154k/200k)  [pad]  │  [⬢→handoff]  │  v2.1.63  │  ◈ N  │  ◇ N"
+# ctx section padded to first_w; all right-side elements share │ dividers.
 # ==========================================================================
 printf "\n"
 if [ -n "$ctx_str" ]; then
   printf "%b %s ctx  %b" "$ctx_color" "$ctx_marker" "$R"
   progress_bar "$used_int" 30 136 152 50 200 120 56 80 192 64 80
-  printf "  %b%2d%%%b" "$ctx_color" "$used_int" "$R"
-  [ -n "$ctx_tokens_str" ] && printf "  %b(%s)%b" "$C_MUTED" "$ctx_tokens_str" "$R"
+  printf "  %b%s%b" "$ctx_color" "$ctx_pct_str" "$R"
+  [ -n "$ctx_tokens_str" ] && printf "  %b(%s)%b" "$ctx_color" "$ctx_tokens_str" "$R"
+  ctx_pad=$(( first_w - ctx_sec_w ))
+  [ "$ctx_pad" -gt 0 ] && printf "%*s" "$ctx_pad" ""
   if [ "$handoff_warn" -eq 1 ]; then
-    printf "  %b\xe2\xac\xa2 \xe2\x86\x92 handoff%b" "$C_WARN" "$R"   # ⬢ → handoff
+    printf "$DIV" "$C_MUTED" "$R"
+    printf "%b\xe2\xac\xa2 \xe2\x86\x92 handoff%b" "$C_WARN" "$R"
   fi
-fi
-# Version: v2.1.63 in muted; v2.1.63 → 2.1.64 in warning when update is available
-if [ -n "$ver_current" ]; then
-  printf "$DIV" "$C_MUTED" "$R"
-  if [ -n "$ver_latest" ] && [ "$ver_current" != "$ver_latest" ]; then
-    printf "%bv%s%b %b\xe2\x86\x92 %s%b" "$C_WARN" "$ver_current" "$R" "$C_MUTED" "$ver_latest" "$R"
-  else
-    printf "%bv%s%b" "$C_MUTED" "$ver_current" "$R"
+  if [ -n "$ver_current" ]; then
+    printf "$DIV" "$C_MUTED" "$R"
+    if [ -n "$ver_latest" ] && [ "$ver_current" != "$ver_latest" ]; then
+      printf "%bv%s \xe2\x86\x92 %s%b" "$C_WARN" "$ver_current" "$ver_latest" "$R"
+    else
+      printf "%bv%s%b" "$C_MUTED" "$ver_current" "$R"
+    fi
   fi
-fi
-if [ -n "$issue_count" ] && [ "$issue_count" -gt 0 ] 2>/dev/null; then
-  printf "$DIV" "$C_MUTED" "$R"
-  printf "%b\xe2\x97\x88 issues: %s%b" "$C_TEAL" "$issue_count" "$R"         # ◈
-fi
-if [ "$inbox_depth" -gt 0 ] 2>/dev/null; then
-  printf "$DIV" "$C_MUTED" "$R"
-  printf "%b\xe2\x97\x87 inbox: %s%b" "$C_EMERALD_LT" "$inbox_depth" "$R"   # ◇
+  if [ -n "$issue_count" ] && [ "$issue_count" -gt 0 ] 2>/dev/null; then
+    printf "$DIV" "$C_MUTED" "$R"
+    printf "%b\xe2\x97\x88 issues: %s%b" "$C_TEAL" "$issue_count" "$R"
+  fi
+  if [ "$inbox_depth" -gt 0 ] 2>/dev/null; then
+    printf "$DIV" "$C_MUTED" "$R"
+    printf "%b\xe2\x97\x87 inbox: %s%b" "$C_EMERALD_LT" "$inbox_depth" "$R"
+  fi
 fi
