@@ -11,7 +11,12 @@ esac
 input=$(cat)
 
 # --- model ---
-model=$(echo "$input" | jq -r '.model.display_name // ""')
+model_raw=$(echo "$input" | jq -r '.model.display_name // ""')
+# Prefix "Claude " if not already present (API returns e.g. "Sonnet 4.6")
+case "$model_raw" in
+  Claude*) model="$model_raw" ;;
+  *)       model="Claude $model_raw" ;;
+esac
 
 # --- folder ---
 dir=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
