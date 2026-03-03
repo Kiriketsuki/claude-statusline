@@ -217,13 +217,13 @@ progress_bar() {
         else printf "%b\xe2\x97\x8b" "$C_HEX_EMPTY"; fi ;;                          # ○
       wave)
         # 2-phase alternation (up/down), 4-step scroll via wave_shift.
-        # Filled cells always solid (▲▼); empty cells always outline (△▽).
+        # Filled and empty cells use the same solid glyph (▲▼); only color differs.
         local wpos=$(( (i + wave_shift) % 4 ))
         case "$wpos" in
-          0|2) if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xb2" "$cfill"   # ▲ solid up
-               else printf "%b\xe2\x96\xb3" "$C_HEX_EMPTY"; fi ;;                  # △ outline up, dim
-          1|3) if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xbc" "$cfill"   # ▼ solid down
-               else printf "%b\xe2\x96\xbd" "$C_HEX_EMPTY"; fi ;;                  # ▽ outline down, dim
+          0|2) if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xb2" "$cfill"   # ▲ solid up, filled
+               else printf "%b\xe2\x96\xb2" "$C_HEX_EMPTY"; fi ;;                  # ▲ solid up, dim
+          1|3) if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xbc" "$cfill"   # ▼ solid down, filled
+               else printf "%b\xe2\x96\xbc" "$C_HEX_EMPTY"; fi ;;                  # ▼ solid down, dim
         esac ;;
       block)
         if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\x88" "$cfill"           # █
