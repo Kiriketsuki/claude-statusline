@@ -9,13 +9,14 @@ case "$(uname -s 2>/dev/null)" in
 esac
 
 # --- accessibility flags ---
-# NO_COLOR (https://no-color.org/): when set and non-zero, disable all ANSI colour
-if [ -n "${NO_COLOR-}" ] && [ "${NO_COLOR}" != "0" ]; then
+# NO_COLOR (https://no-color.org/): when present in the environment (even empty), disable ANSI.
+# Local extension: NO_COLOR=0 explicitly re-enables colour (intentional deviation from spec).
+if [ "${NO_COLOR+set}" = "set" ] && [ "${NO_COLOR}" != "0" ]; then
   NO_COLOUR=1
 else
   NO_COLOUR=0
 fi
-# CHRYSAKI_NO_ANIMATE: when set and non-zero, freeze all animation phases
+# CHRYSAKI_NO_ANIMATE: any value other than '0' freezes all animation phases.
 CHRYSAKI_NO_ANIMATE="${CHRYSAKI_NO_ANIMATE:-0}"
 
 input=$(cat)
@@ -171,7 +172,7 @@ gradient_text_off() {
 
 # --- progress_bar: 8-position progress bar with threshold colours and configurable shape ---
 # Usage: progress_bar PERCENT NR NG NB WARN_T WR WG WB CRIT_T CR CG CB
-# Shape controlled by CHRYSAKI_BAR_STYLE env var (default: hex).
+# Shape controlled by CHRYSAKI_BAR_STYLE env var (default: wave).
 # Does NOT print reset -- caller handles that.
 #
 # Styles:
@@ -207,7 +208,7 @@ progress_bar() {
 
   i=0
   while [ "$i" -lt 8 ]; do
-    case "${BAR_STYLE:-hex}" in
+    case "${BAR_STYLE:-wave}" in
       diamond)
         if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x97\x86" "$cfill"           # ◆
         else printf "%b\xe2\x97\x87" "$C_HEX_EMPTY"; fi ;;                          # ◇
@@ -215,17 +216,20 @@ progress_bar() {
         if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x97\x8f" "$cfill"           # ●
         else printf "%b\xe2\x97\x8b" "$C_HEX_EMPTY"; fi ;;                          # ○
       wave)
-        # Alternating ▲▼ tiling trapezoid effect.
-        # wave_shift (global, 0-3) creates 4-phase scroll for smoother motion.
-        # wpos % 2 selects glyph: 0 = up triangle, 1 = down triangle.
+        # 4-phase scroll using 4 distinct glyphs: ▲ ▼ △ ▽ (solid/outline up/down triangles).
+        # wave_shift (global, 0-3) advances the pattern one position left every 2s.
+        # Each of the 4 positions produces a visually distinct bar pattern.
         local wpos=$(( (i + wave_shift) % 4 ))
-        if [ $(( wpos % 2 )) -eq 0 ]; then
-          if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xb2" "$cfill"         # ▲ bright
-          else printf "%b\xe2\x96\xb2" "$C_HEX_EMPTY"; fi                           # ▲ dim
-        else
-          if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xbc" "$cfill"         # ▼ bright
-          else printf "%b\xe2\x96\xbc" "$C_HEX_EMPTY"; fi                           # ▼ dim
-        fi ;;
+        case "$wpos" in
+          0) if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xb2" "$cfill"      # ▲ solid up
+             else printf "%b\xe2\x96\xb2" "$C_HEX_EMPTY"; fi ;;                    # ▲ solid up, dim
+          1) if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xbc" "$cfill"      # ▼ solid down
+             else printf "%b\xe2\x96\xbc" "$C_HEX_EMPTY"; fi ;;                    # ▼ solid down, dim
+          2) if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xb3" "$cfill"      # △ outline up
+             else printf "%b\xe2\x96\xb3" "$C_HEX_EMPTY"; fi ;;                    # △ outline up, dim
+          3) if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\xbd" "$cfill"      # ▽ outline down
+             else printf "%b\xe2\x96\xbd" "$C_HEX_EMPTY"; fi ;;                    # ▽ outline down, dim
+        esac ;;
       block)
         if [ "$i" -lt "$filled" ]; then printf "%s\xe2\x96\x88" "$cfill"           # █
         else printf "%b\xe2\x96\x91" "$C_HEX_EMPTY"; fi ;;                          # ░
@@ -336,30 +340,29 @@ if [ -n "$seven_d" ]; then
   fi
 fi
 
-# --- animation phase (shared across all gradient_text calls this render) ---
-# 6 units/second, 400-unit full cycle ~67s.
+# --- animation phase (shared across all rendering this frame) ---
+# All phases derived from a single timestamp to avoid cross-second drift.
+# CHRYSAKI_NO_ANIMATE: any value other than '0' freezes all phases.
+# 8-step sine lookup for threshold pulse (scaled -100..+100); 1 step/sec = ~8s full cycle.
+sine8=(0 71 100 71 0 -71 -100 -71)
 if [ "$CHRYSAKI_NO_ANIMATE" != "0" ]; then
   grad_phase=0
   wave_shift=0
   badge_tick=0
-else
-  grad_phase=$(( ($(date +%s) * 6) % 400 ))
-  wave_shift=$(( ($(date +%s) / 2) % 4 ))   # 0-3, 4-phase wave scroll for smoother motion
-fi
-
-# --- threshold pulse: sine-wave brightness modulation for warning/critical sections ---
-# 8-step sine lookup (scaled -100..+100); 1 step/sec = ~8s full cycle
-sine8=(0 71 100 71 0 -71 -100 -71)
-if [ "$CHRYSAKI_NO_ANIMATE" != "0" ]; then
   pulse_scale=100
 else
-  pulse_idx=$(( $(date +%s) % 8 ))
-  pulse_scale=$(( 85 + 15 * ${sine8[$pulse_idx]} / 100 ))   # range ~70-100
+  _ts=$(date +%s)
+  grad_phase=$(( (_ts * 6) % 400 ))
+  wave_shift=$(( (_ts / 2) % 4 ))     # 0-3, 4-phase wave scroll
+  badge_tick=$(( (_ts / 2) % 2 ))     # 0 or 1, solid/outline badge alternation
+  pulse_idx=$(( _ts % 8 ))
+  pulse_scale=$(( 85 + 15 * ${sine8[$pulse_idx]} / 100 ))   # range 70-100
 fi
 
 # pulse_color: apply pulse_scale to an RGB colour, emit ANSI escape
 # Usage: pulse_color R G B -> prints \033[38;2;r;g;bm (scaled)
 pulse_color() {
+  [ "$NO_COLOUR" -eq 1 ] && return
   local pr=$(( $1 * pulse_scale / 100 ))
   local pg=$(( $2 * pulse_scale / 100 ))
   local pb=$(( $3 * pulse_scale / 100 ))
@@ -417,8 +420,7 @@ fi
 
 # --- model badge: shape encodes model tier, pulses solid/outline every 2 seconds ---
 # Haiku = ▲/△ (triangle, 3)  Sonnet = ⬟/⬠ (pentagon, 5)  Opus = ⬢/⬡ (hexagon, 6)
-# badge_tick already set in animation-phase block (frozen or live)
-[ -z "$badge_tick" ] && badge_tick=$(( ($(date +%s) / 2) % 2 ))
+# badge_tick set in animation-phase block above (0 when frozen, 0 or 1 when live).
 model_lower=$(printf "%s" "$model" | tr '[:upper:]' '[:lower:]')
 if [ "$badge_tick" -eq 0 ]; then
   case "$model_lower" in
@@ -555,9 +557,12 @@ if [ -n "$ctx_str" ]; then
   [ "$ctx_pad" -gt 0 ] && printf "%*s" "$ctx_pad" ""
   if [ "$handoff_warn" -eq 1 ]; then
     printf "$DIV" "$C_MUTED" "$R"
-    # Handoff beacon: alternates solid/outline hexagon + bright/dim every 2s
-    if [ "$badge_tick" -eq 0 ]; then
-      printf "%b\xe2\xac\xa2 \xe2\x86\x92 handoff%b" "$C_WARN" "$R"             # ⬢ solid, bright
+    # Handoff beacon: alternates solid/outline hexagon + bright/dim every 2s.
+    # All four combinations of badge_tick and NO_COLOUR handled explicitly.
+    if [ "$badge_tick" -eq 0 ] && [ "$NO_COLOUR" -eq 0 ]; then
+      printf "%b\xe2\xac\xa2 \xe2\x86\x92 handoff%b" "$C_WARN" "$R"             # ⬢ solid, bright (colour)
+    elif [ "$badge_tick" -eq 0 ]; then
+      printf "\xe2\xac\xa2 \xe2\x86\x92 handoff"                                 # ⬢ solid, no colour
     elif [ "$NO_COLOUR" -eq 1 ]; then
       printf "\xe2\xac\xa1 \xe2\x86\x92 handoff"                                 # ⬡ outline, no colour
     else
