@@ -194,13 +194,14 @@ progress_bar() {
         if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x97\x8f" "$fr" "$fg" "$fb"   # ●
         else printf "%b\xe2\x97\x8b" "$C_HEX_EMPTY"; fi ;;                                             # ○
       wave)
-        # Alternating ▲▼ / △▽ creates tiling trapezoid / triangle effect
+        # Alternating ▲▼ tiling trapezoid effect.
+        # Same char for filled and empty -- only colour differs (no size mismatch).
         if [ $(( i % 2 )) -eq 0 ]; then
-          if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\xb2" "$fr" "$fg" "$fb"  # ▲
-          else printf "%b\xe2\x96\xb3" "$C_HEX_EMPTY"; fi                                              # △
+          if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\xb2" "$fr" "$fg" "$fb"  # ▲ bright
+          else printf "%b\xe2\x96\xb2" "$C_HEX_EMPTY"; fi                                              # ▲ dim
         else
-          if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\xbc" "$fr" "$fg" "$fb"  # ▼
-          else printf "%b\xe2\x96\xbd" "$C_HEX_EMPTY"; fi                                              # ▽
+          if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\xbc" "$fr" "$fg" "$fb"  # ▼ bright
+          else printf "%b\xe2\x96\xbc" "$C_HEX_EMPTY"; fi                                              # ▼ dim
         fi ;;
       block)
         if [ "$i" -lt "$filled" ]; then printf "\033[38;2;%d;%d;%dm\xe2\x96\x88" "$fr" "$fg" "$fb"   # █
@@ -404,9 +405,7 @@ if [ -n "$five_h" ]; then
   printf "  %b%2d%%%b" "$five_h_color" "$five_h" "$R"
   if [ -n "$five_h_reset" ]; then
     delta=$(compute_delta "$five_h_reset")
-    printf "  %b(%-9s)%b" "$C_MUTED" "${delta:--}" "$R"
-  else
-    printf "             "   # 13 chars: maintains column width when no reset time
+    [ -n "$delta" ] && printf "  %b(%s)%b" "$C_MUTED" "$delta" "$R"
   fi
 fi
 if [ -n "$seven_d" ]; then
@@ -417,7 +416,7 @@ if [ -n "$seven_d" ]; then
   printf "  %b%2d%%%b" "$seven_d_color" "$seven_d" "$R"
   if [ -n "$seven_d_reset" ]; then
     delta=$(compute_delta "$seven_d_reset")
-    printf "  %b(%-9s)%b" "$C_MUTED" "${delta:--}" "$R"
+    [ -n "$delta" ] && printf "  %b(%s)%b" "$C_MUTED" "$delta" "$R"
   fi
 fi
 
@@ -435,7 +434,7 @@ if [ -n "$ctx_str" ]; then
     printf "  %b\xe2\xac\xa2 \xe2\x86\x92 handoff%b" "$C_WARN" "$R"   # ⬢ → handoff
   fi
 fi
-# Version  (shown as v2.1.63 in muted; v2.1.63 → 2.1.64 in warning if update available)
+# Version: v2.1.63 in muted; v2.1.63 → 2.1.64 in warning when update is available
 if [ -n "$ver_current" ]; then
   printf "$DIV" "$C_MUTED" "$R"
   if [ -n "$ver_latest" ] && [ "$ver_current" != "$ver_latest" ]; then
