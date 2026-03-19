@@ -387,6 +387,13 @@ COLS=$(tput cols 2>/dev/null || echo 80)
 # --- bar style (override via CHRYSAKI_BAR_STYLE env var) ---
 BAR_STYLE="${CHRYSAKI_BAR_STYLE:-wave}"
 
+# --- active Claude account (inferred from CLAUDE_CONFIG_DIR) ---
+_claude_cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+case "$_claude_cfg" in
+  *aurrigo*) claude_account="aurrigo"; C_ACCOUNT="$C_ORANGE" ;;
+  *)         claude_account="personal"; C_ACCOUNT="$C_EMERALD_LT" ;;
+esac
+
 # Pre-compute deltas and section widths for cross-line | alignment
 delta5="" delta7=""
 [ -n "$five_h_reset" ] && delta5=$(compute_delta "$five_h_reset")
@@ -580,4 +587,6 @@ if [ -n "$ctx_str" ]; then
     printf "$DIV" "$C_MUTED" "$R"
     printf "%b\xe2\x97\x87 inbox: %s%b" "$C_EMERALD_LT" "$inbox_depth" "$R"
   fi
+  printf "$DIV" "$C_MUTED" "$R"
+  printf "%b\xe2\x96\xb0 %s%b" "$C_ACCOUNT" "$claude_account" "$R"
 fi
