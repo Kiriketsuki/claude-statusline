@@ -450,6 +450,18 @@ if [ -n "$issue_count" ] && [ "$issue_count" -gt 0 ] 2>/dev/null; then
   l2_has_right=1
 fi
 
+# Pad 5h section so the L2 │ divider aligns with the L3 bridge/handoff column.
+# Clamped so bridge2_n stays >= 1 on narrow terminals.
+l2_5h_pad=0
+if [ -n "$five_h" ] && [ "$ctx_sec_w" -gt "$five_h_sec_w" ] 2>/dev/null; then
+  l2_5h_pad=$(( ctx_sec_w - five_h_sec_w ))
+  _div_w=0; [ -n "$seven_d" ] && _div_w=5
+  _l2t=$(( l2_has_right == 1 ? l2_right_w : 0 ))
+  _max_pad=$(( COLS - five_h_sec_w - _div_w - seven_d_sec_w - _l2t - L23_BRIDGE_PAD - 1 ))
+  [ "$_max_pad" -lt 0 ] && _max_pad=0
+  [ "$l2_5h_pad" -gt "$_max_pad" ] 2>/dev/null && l2_5h_pad="$_max_pad"
+fi
+
 # Line 3 right cluster: inbox + email (version/issues moved to L2)
 # Handoff is embedded in bridge split when active — not counted here
 l3_right_w=0
@@ -579,6 +591,7 @@ if [ -n "$five_h" ]; then
   progress_bar "$five_h" 26 138 106 50 184 160 56 75 192 64 80
   printf "  %b%s%b" "$five_h_color" "$five_h_pct_str" "$R"
   [ -n "$delta5" ] && printf "  %b(%s)%b" "$five_h_color" "$delta5" "$R"
+  [ "$l2_5h_pad" -gt 0 ] && printf "%${l2_5h_pad}s" ""
 fi
 if [ -n "$five_h" ] && [ -n "$seven_d" ]; then
   printf "$DIV" "$C_MUTED" "$R"
@@ -592,7 +605,7 @@ if [ -n "$seven_d" ]; then
 fi
 if [ -n "${five_h}${seven_d}" ]; then
   l2_left_w=0
-  [ -n "$five_h"  ] && l2_left_w=$(( l2_left_w + five_h_sec_w ))
+  [ -n "$five_h"  ] && l2_left_w=$(( l2_left_w + five_h_sec_w + l2_5h_pad ))
   [ -n "$five_h"  ] && [ -n "$seven_d" ] && l2_left_w=$(( l2_left_w + 5 ))
   [ -n "$seven_d" ] && l2_left_w=$(( l2_left_w + seven_d_sec_w ))
   _l2_trailing=$(( l2_has_right == 1 ? l2_right_w : 0 ))
