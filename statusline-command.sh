@@ -387,11 +387,18 @@ COLS=$(tput cols 2>/dev/null || echo 80)
 # --- bar style (override via CHRYSAKI_BAR_STYLE env var) ---
 BAR_STYLE="${CHRYSAKI_BAR_STYLE:-wave}"
 
-# --- active Claude account (inferred from CLAUDE_CONFIG_DIR) ---
-_claude_cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+# --- active Claude account (email from credentials file) ---
+_claude_cfg="${CLAUDE_CONFIG_DIR:-}"
+if [ -n "$_claude_cfg" ] && [ -f "$_claude_cfg/.claude.json" ]; then
+  _creds_file="$_claude_cfg/.claude.json"
+else
+  _creds_file="$HOME/.claude.json"
+fi
+claude_email=$(jq -r '.oauthAccount.emailAddress // empty' "$_creds_file" 2>/dev/null)
+[ -z "$claude_email" ] && claude_email="unknown"
 case "$_claude_cfg" in
-  *aurrigo*) claude_account="aurrigo"; C_ACCOUNT="$C_ORANGE" ;;
-  *)         claude_account="personal"; C_ACCOUNT="$C_EMERALD_LT" ;;
+  *aurrigo*) C_ACCOUNT="$C_ORANGE" ;;
+  *)         C_ACCOUNT="$C_EMERALD_LT" ;;
 esac
 
 # Pre-compute deltas and section widths for cross-line | alignment
@@ -588,5 +595,5 @@ if [ -n "$ctx_str" ]; then
     printf "%b\xe2\x97\x87 inbox: %s%b" "$C_EMERALD_LT" "$inbox_depth" "$R"
   fi
   printf "$DIV" "$C_MUTED" "$R"
-  printf "%b\xe2\x96\xb0 %s%b" "$C_ACCOUNT" "$claude_account" "$R"
+  printf "%b\xe2\x96\xb0 %s%b" "$C_ACCOUNT" "$claude_email" "$R"
 fi
