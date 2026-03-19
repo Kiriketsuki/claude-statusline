@@ -387,19 +387,17 @@ COLS=$(tput cols 2>/dev/null || echo 80)
 # --- bar style (override via CHRYSAKI_BAR_STYLE env var) ---
 BAR_STYLE="${CHRYSAKI_BAR_STYLE:-wave}"
 
-# --- active Claude account (email from credentials file) ---
-_claude_cfg="${CLAUDE_CONFIG_DIR:-}"
-if [ -n "$_claude_cfg" ] && [ -f "$_claude_cfg/.claude.json" ]; then
-  _creds_file="$_claude_cfg/.claude.json"
-else
-  _creds_file="$HOME/.claude.json"
-fi
+# --- active Claude account (inferred from workspace dir, not env) ---
+case "$dir" in
+  */workdev/Aurrigo*)
+    _creds_file="$HOME/.claude-aurrigo/.claude.json"
+    C_ACCOUNT="$C_ORANGE" ;;
+  *)
+    _creds_file="$HOME/.claude.json"
+    C_ACCOUNT="$C_EMERALD_LT" ;;
+esac
 claude_email=$(jq -r '.oauthAccount.emailAddress // empty' "$_creds_file" 2>/dev/null)
 [ -z "$claude_email" ] && claude_email="unknown"
-case "$_claude_cfg" in
-  *aurrigo*) C_ACCOUNT="$C_ORANGE" ;;
-  *)         C_ACCOUNT="$C_EMERALD_LT" ;;
-esac
 
 # Pre-compute deltas and section widths for cross-line | alignment
 delta5="" delta7=""
