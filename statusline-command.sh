@@ -90,8 +90,14 @@ if [ -f "$SCRATCH" ]; then
   inbox_depth=$(awk '/^## Ramblings/{found=1; next} /^## /{found=0} found && /^- /{c++} END{print c+0}' "$SCRATCH")
 fi
 
-# --- usage stats (5h / 7d) from per-account cache ---
-# Resolve account config directory (matches fetch-usage.sh logic)
+# --- usage stats (5h / 7d) from native rate_limits in JSON stdin ---
+# Claude Code >= 2.1 provides rate_limits.five_hour and rate_limits.seven_day directly.
+five_h=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty' 2>/dev/null | cut -d. -f1)
+seven_d=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty' 2>/dev/null | cut -d. -f1)
+five_h_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null)
+seven_d_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty' 2>/dev/null)
+
+# --- account config dir (still needed for email display and fetch-stats.sh) ---
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then
   _config_dir="$CLAUDE_CONFIG_DIR"
 else
@@ -101,28 +107,10 @@ else
   esac
 fi
 _acct=$(basename "$_config_dir")
-CACHE_FILE="/tmp/.claude_usage_cache_${_acct}"
-five_h=""
-seven_d=""
-five_h_reset=""
-seven_d_reset=""
-if [ -f "$CACHE_FILE" ]; then
-  five_h=$(sed -n '1p' "$CACHE_FILE")
-  seven_d=$(sed -n '2p' "$CACHE_FILE")
-  five_h_reset=$(sed -n '3p' "$CACHE_FILE")
-  seven_d_reset=$(sed -n '4p' "$CACHE_FILE")
-else
-  bash ~/.claude/statusline/fetch-usage.sh > /dev/null 2>&1 &
-fi
 
-# --- compute_delta: ISO timestamp -> human-readable time until reset ---
+# --- compute_delta: Unix epoch -> human-readable time until reset ---
 compute_delta() {
-  local clean reset_epoch now_epoch diff days hours minutes
-  clean=$(echo "$1" | sed 's/\.[0-9]*//' | sed 's/[+-][0-9][0-9]:[0-9][0-9]$//' | sed 's/Z$//')
-  reset_epoch=$(TZ=UTC date -d "$clean" "+%s" 2>/dev/null)
-  if [ -z "$reset_epoch" ]; then
-    reset_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$clean" "+%s" 2>/dev/null)
-  fi
+  local reset_epoch="$1" now_epoch diff days hours minutes
   [ -z "$reset_epoch" ] && return
   now_epoch=$(date -u "+%s")
   diff=$(( reset_epoch - now_epoch ))
@@ -148,72 +136,10 @@ osc8_link() {
   fi
 }
 
-# --- gradient_text: Chrysaki Jewel animated gradient (left-to-right flow) ---
-# 4-stop seamless loop: Emerald Lt -> Royal Blue Lt -> Amethyst Lt -> Royal Blue Lt -> Emerald Lt
-# Characters span 200 of the 400-unit cycle; phase shifts the window each render.
-# grad_phase must be set before calling. Caller must reset when done.
-gradient_text() {
-  local text="$1" len i t s r g b span
-  len="${#text}"
-  [ "$len" -eq 0 ] && return
-  if [ "$NO_COLOUR" -eq 1 ]; then printf "%s" "$text"; return; fi
-  local r1=26  g1=138 b1=106   # #1a8a6a Emerald Lt
-  local r2=28  g2=61  b2=122   # #1c3d7a Royal Blue Lt
-  local r3=88  g3=48  b3=144   # #583090 Amethyst Lt
-  span=$(( len > 1 ? len - 1 : 1 ))
-  i=0
-  while [ "$i" -lt "$len" ]; do
-    t=$(( (i * 200 / span + grad_phase) % 400 ))
-    if [ "$t" -lt 100 ]; then
-      r=$(( r1 + (r2 - r1) * t / 100 )); g=$(( g1 + (g2 - g1) * t / 100 )); b=$(( b1 + (b2 - b1) * t / 100 ))
-    elif [ "$t" -lt 200 ]; then
-      s=$(( t - 100 ))
-      r=$(( r2 + (r3 - r2) * s / 100 )); g=$(( g2 + (g3 - g2) * s / 100 )); b=$(( b2 + (b3 - b2) * s / 100 ))
-    elif [ "$t" -lt 300 ]; then
-      s=$(( t - 200 ))
-      r=$(( r3 + (r2 - r3) * s / 100 )); g=$(( g3 + (g2 - g3) * s / 100 )); b=$(( b3 + (b2 - b3) * s / 100 ))
-    else
-      s=$(( t - 300 ))
-      r=$(( r2 + (r1 - r2) * s / 100 )); g=$(( g2 + (g1 - g2) * s / 100 )); b=$(( b2 + (b1 - b2) * s / 100 ))
-    fi
-    printf "\033[38;2;%d;%d;%dm%s" "$r" "$g" "$b" "${text:$i:1}"
-    i=$(( i + 1 ))
-  done
-}
-
-# --- gradient_text_off: continuous gradient across multiple Line-1 segments ---
-# OFFSET: absolute char position within the full gradient span
-# TOTAL:  total gradient chars on the line (determines scale)
-gradient_text_off() {
-  local text="$1" offset="$2" total="$3"
-  local len i t s r g b span
-  len="${#text}"
-  [ "$len" -eq 0 ] && return
-  if [ "$NO_COLOUR" -eq 1 ]; then printf "%s" "$text"; return; fi
-  local r1=26  g1=138 b1=106
-  local r2=28  g2=61  b2=122
-  local r3=88  g3=48  b3=144
-  [ "$total" -le 1 ] && total=2
-  span=$(( total - 1 ))
-  i=0
-  while [ "$i" -lt "$len" ]; do
-    t=$(( ((offset + i) * 200 / span + grad_phase) % 400 ))
-    if [ "$t" -lt 100 ]; then
-      r=$(( r1 + (r2 - r1) * t / 100 )); g=$(( g1 + (g2 - g1) * t / 100 )); b=$(( b1 + (b2 - b1) * t / 100 ))
-    elif [ "$t" -lt 200 ]; then
-      s=$(( t - 100 ))
-      r=$(( r2 + (r3 - r2) * s / 100 )); g=$(( g2 + (g3 - g2) * s / 100 )); b=$(( b2 + (b3 - b2) * s / 100 ))
-    elif [ "$t" -lt 300 ]; then
-      s=$(( t - 200 ))
-      r=$(( r3 + (r2 - r3) * s / 100 )); g=$(( g3 + (g2 - g3) * s / 100 )); b=$(( b3 + (b2 - b3) * s / 100 ))
-    else
-      s=$(( t - 300 ))
-      r=$(( r2 + (r1 - r2) * s / 100 )); g=$(( g2 + (g1 - g2) * s / 100 )); b=$(( b2 + (b1 - b2) * s / 100 ))
-    fi
-    printf "\033[38;2;%d;%d;%dm%s" "$r" "$g" "$b" "${text:$i:1}"
-    i=$(( i + 1 ))
-  done
-}
+# --- gradient_text / gradient_text_off: REMOVED in v2.1 ---
+# Gradient rendering looked broken when static (Claude Code only re-renders on events).
+# Replaced by solid jewel-tone colours. The phase math (grad_phase) is retained for
+# future re-enablement behind CHRYSAKI_ANIMATE when refreshIntervalSeconds lands.
 
 # --- progress_bar: 8-position progress bar with threshold colours and configurable shape ---
 # Usage: progress_bar PERCENT NR NG NB WARN_T WR WG WB CRIT_T CR CG CB
@@ -446,7 +372,7 @@ if [ "$CHRYSAKI_NO_ANIMATE" != "0" ]; then
   wave_shift=0
   badge_tick=0
   pulse_scale=100
-  _bridge_rot=0
+  _jewel_seed=0
 else
   _ts=$(date +%s)
   grad_phase=$(( (_ts * 6) % 400 ))
@@ -454,22 +380,48 @@ else
   badge_tick=$(( (_ts / 2) % 2 ))     # 0 or 1, solid/outline badge alternation
   pulse_idx=$(( _ts % 8 ))
   pulse_scale=$(( 85 + 15 * ${sine8[$pulse_idx]} / 100 ))   # range 70-100
-  _bridge_rot=$(( (_ts / 3) % 3 ))   # 0-2, rotate every 3 seconds
+  _jewel_seed="$_ts"
 fi
+# CHRYSAKI_JEWEL_STATIC: pin jewel index for screenshots/demos
+[ -n "${CHRYSAKI_JEWEL_STATIC:-}" ] && _jewel_seed=0
 
-# --- bridge colour palette (muted Chrysaki jewel tones for L2-L4 bridges) ---
-# Colours rotate across lines every 3 seconds so the statusline feels alive.
+# --- Chrysaki jewel tone pool (9 colours, interpolated around the Emerald-RoyalBlue-Amethyst loop) ---
+# Full-brightness variants for text accents (L1 bridges, branch name).
+# Dimmed variants for L2-L4 bridges.
+# _jewel_seed + prime divisors ensure each line gets a different colour that shifts per render.
 if [ "$NO_COLOUR" -eq 0 ]; then
-  _BR_COLORS=(
-    "\033[38;2;22;100;78m"     # dimmed Emerald
-    "\033[38;2;22;50;96m"      # dimmed Royal Blue
-    "\033[38;2;64;38;108m"     # dimmed Amethyst
+  JEWEL_COLORS=(
+    "\033[38;2;26;138;106m"    # 0 Emerald Lt
+    "\033[38;2;26;119;100m"    # 1 Jade
+    "\033[38;2;27;99;114m"     # 2 Deep Teal
+    "\033[38;2;28;61;122m"     # 3 Royal Blue Lt
+    "\033[38;2;43;55;128m"     # 4 Sapphire
+    "\033[38;2;58;48;133m"     # 5 Indigo
+    "\033[38;2;88;48;144m"     # 6 Amethyst Lt
+    "\033[38;2;70;72;136m"     # 7 Twilight
+    "\033[38;2;50;96;126m"     # 8 Storm
   )
-  C_BR_L2="${_BR_COLORS[$(( (_bridge_rot + 0) % 3 ))]}"
-  C_BR_L3="${_BR_COLORS[$(( (_bridge_rot + 1) % 3 ))]}"
-  C_BR_L4="${_BR_COLORS[$(( (_bridge_rot + 2) % 3 ))]}"
+  JEWEL_COLORS_DIM=(
+    "\033[38;2;20;104;80m"     # 0 dimmed Emerald
+    "\033[38;2;20;90;76m"      # 1 dimmed Jade
+    "\033[38;2;21;75;86m"      # 2 dimmed Deep Teal
+    "\033[38;2;22;46;92m"      # 3 dimmed Royal Blue
+    "\033[38;2;32;42;96m"      # 4 dimmed Sapphire
+    "\033[38;2;44;36;100m"     # 5 dimmed Indigo
+    "\033[38;2;66;36;108m"     # 6 dimmed Amethyst
+    "\033[38;2;53;54;102m"     # 7 dimmed Twilight
+    "\033[38;2;38;72;95m"      # 8 dimmed Storm
+  )
+  # Per-line jewel selection: different primes guarantee no two adjacent lines share a colour
+  C_JEWEL_L1="${JEWEL_COLORS[$(( _jewel_seed % 9 ))]}"
+  C_BR_L1="${JEWEL_COLORS_DIM[$(( _jewel_seed % 9 ))]}"
+  C_BR_L2="${JEWEL_COLORS_DIM[$(( (_jewel_seed / 3) % 9 ))]}"
+  C_BR_L3="${JEWEL_COLORS_DIM[$(( (_jewel_seed / 7) % 9 ))]}"
+  C_BR_L4="${JEWEL_COLORS_DIM[$(( (_jewel_seed / 11) % 9 ))]}"
+  C_JEWEL_L4="${JEWEL_COLORS[$(( (_jewel_seed / 11) % 9 ))]}"
 else
-  C_BR_L2="" C_BR_L3="" C_BR_L4=""
+  JEWEL_COLORS=() JEWEL_COLORS_DIM=()
+  C_JEWEL_L1="" C_BR_L1="" C_BR_L2="" C_BR_L3="" C_BR_L4="" C_JEWEL_L4=""
 fi
 
 # pulse_color: apply pulse_scale to an RGB colour, emit ANSI escape
@@ -626,11 +578,14 @@ if [ -n "$ctx_str" ]; then
   fi
 fi
 
+# Always show +N -M (even +0 -0), so width is always populated
 _l4_mc_w=0
 if [ "$git_insertions" -gt 0 ] 2>/dev/null || [ "$git_deletions" -gt 0 ] 2>/dev/null; then
   [ "$git_insertions" -gt 0 ] 2>/dev/null && _l4_mc_w=$(( _l4_mc_w + 1 + ${#git_insertions} ))
   [ "$git_insertions" -gt 0 ] 2>/dev/null && [ "$git_deletions" -gt 0 ] 2>/dev/null && _l4_mc_w=$(( _l4_mc_w + 1 ))
   [ "$git_deletions" -gt 0 ] 2>/dev/null && _l4_mc_w=$(( _l4_mc_w + 1 + ${#git_deletions} ))
+else
+  _l4_mc_w=5   # "+0 -0"
 fi
 
 # --- col4 content widths ---
@@ -734,8 +689,8 @@ print_bridge_end() {
 
 # ==========================================================================
 # Line 1: Brand + Version + Email
-# Layout:  " ━━  ⬢ $model  [━━━ bridge ━━━]  $dir   v2.1.79   email  ━━"
-# Gradient flows continuously across all ━ and text segments.
+# Layout:  " ━━  ⬢ $model  [━━━ bridge ━━━]  version  [━━━]  CWD  ━  email  ━━"
+# Solid colours: Emerald Lt for model/badge, jewel-tone bridges, Secondary for version.
 # ==========================================================================
 L1_PREFIX_LEN=7    # " ━━  ⬢ "
 
@@ -791,18 +746,15 @@ _bridge1_n=$(( mx1 - _l1_model_w + 1 ))
 _l1_right_fixed=$(( dir_len + 7 + email_len ))
 [ "$_ver_display_len" -gt 0 ] && _l1_right_fixed=$(( _l1_right_fixed + _ver_display_len ))
 
-# Split remaining space between bridge2 and trailing gradient bridge
+# Split remaining space between bridge2 and trailing bridge
 _l1_total_fixed=$(( _l1_model_w + 6 + _bridge1_n + _l1_right_fixed ))
 _l1_remaining=$(( COLS - _l1_total_fixed ))
 # Bridge 2 gets remaining minus trailing bridge (trailing = " " + N dashes, minimum BRIDGE_PAD+1)
 _bridge2_n=$(( _l1_remaining - 6 - BRIDGE_PAD - 1 ))
 [ "$_bridge2_n" -lt 1 ] && _bridge2_n=1
-# Trailing gradient: whatever bridge2 didn't consume
+# Trailing bridge: whatever bridge2 didn't consume
 _l1_trail_n=$(( _l1_remaining - 6 - _bridge2_n - 1 ))
 [ "$_l1_trail_n" -lt 1 ] && _l1_trail_n=1
-
-total_grad=$(( COLS ))
-[ "$total_grad" -le 1 ] && total_grad=2
 
 # Build bridge strings
 bridge1_str=""
@@ -810,51 +762,38 @@ bi=0; while [ "$bi" -lt "$_bridge1_n" ]; do bridge1_str="${bridge1_str}━"; bi=
 bridge2_str=""
 bi=0; while [ "$bi" -lt "$_bridge2_n" ]; do bridge2_str="${bridge2_str}━"; bi=$(( bi + 1 )); done
 
-# Render Line 1
-printf "%b" "$BOLD"
-goff=0
-l1_prefix=$(printf " ━━  %b " "$model_badge")
-gradient_text_off "$l1_prefix" "$goff" "$total_grad";   goff=$(( goff + L1_PREFIX_LEN ))
-gradient_text_off "$model" "$goff" "$total_grad";   goff=$(( goff + ${#model} ))
-# Bridge 1: model → version (aligns version at mx1)
-gradient_text_off "   " "$goff" "$total_grad"; goff=$(( goff + 3 ))
-gradient_text_off "$bridge1_str" "$goff" "$total_grad"; goff=$(( goff + _bridge1_n ))
-gradient_text_off "   " "$goff" "$total_grad"; goff=$(( goff + 3 ))
-# Version (at mx1 + 7, aligning with col2 content)
+# Render Line 1 — solid colours with jewel-tone bridges
+# Model + badge: Emerald Lt (brand identity)
+printf "%b%b ━━  %b %s%b" "$BOLD" "$C_EMERALD_LT" "$model_badge" "$model" "$R"
+# Bridge 1: model → version (jewel-tone thick dashes)
+printf "   %b%s%b   " "$C_BR_L1" "$bridge1_str" "$R"
+# Version
 if [ "$_ver_display_len" -gt 0 ]; then
-  gradient_text_off "$_ver_display" "$goff" "$total_grad"; goff=$(( goff + _ver_display_len ))
+  printf "%b%s%b" "$C_SEC" "$_ver_display" "$R"
 fi
-# Bridge 2: version → CWD
-gradient_text_off "   " "$goff" "$total_grad"; goff=$(( goff + 3 ))
-gradient_text_off "$bridge2_str" "$goff" "$total_grad"; goff=$(( goff + _bridge2_n ))
-gradient_text_off "   " "$goff" "$total_grad"; goff=$(( goff + 3 ))
-printf "%b" "$R"
+# Bridge 2: version → CWD (different jewel tone segment)
+_l1_br2_color="${JEWEL_COLORS_DIM[$(( (_jewel_seed / 5) % 9 ))]:-$C_MUTED}"
+printf "   %b%s%b   " "$_l1_br2_color" "$bridge2_str" "$R"
 # CWD
 if [ -n "$repo_url" ]; then
   printf "%b" "$BOLD"
   osc8_link "$dir_display" "$repo_url"
   printf "%b" "$R"
 else
-  printf "%b" "$BOLD"
-  gradient_text_off "$dir_display" "$goff" "$total_grad"
-  printf "%b" "$R"
+  printf "%b%b%s%b" "$BOLD" "$C_JEWEL_L1" "$dir_display" "$R"
 fi
-goff=$(( goff + dir_len ))
 # Bridge to email (thick to match L1 style)
 _bridge_color="$C_MUTED"
 print_bridge 1 "$BR_THICK"
-goff=$(( goff + 7 ))
 # Email
 printf "%b" "$C_ACCOUNT"
 osc8_link "$claude_email" "https://console.anthropic.com"
 printf "%b" "$R"
-goff=$(( goff + email_len ))
-# Trailing gradient bridge: fill remaining space with ━━━
+# Trailing bridge: fill remaining space with ━━━ in jewel tone
 _l1_trail=""
 bi=0; while [ "$bi" -lt "$_l1_trail_n" ]; do _l1_trail="${_l1_trail}━"; bi=$(( bi + 1 )); done
-printf "%b" "$BOLD"
-gradient_text_off " ${_l1_trail}" "$goff" "$total_grad"
-printf "%b" "$R"
+_l1_trail_color="${JEWEL_COLORS_DIM[$(( (_jewel_seed / 13) % 9 ))]:-$C_MUTED}"
+printf " %b%s%b" "$_l1_trail_color" "$_l1_trail" "$R"
 
 # ==========================================================================
 # Line 2: Usage + Speed + Cost + Clock
@@ -997,14 +936,12 @@ if [ -n "$branch" ]; then
   printf "%b" "$BOLD"
   if [ -n "$repo_url" ]; then
     _branch_url="${repo_url}/tree/${branch}"
-    gradient_text "$branch"
-    # Wrap the branch name in OSC 8 — but gradient_text already printed chars,
-    # so we use a post-hoc approach: no link inside gradient (too complex).
-    # Instead, print branch as gradient text (visual) without link wrapping.
+    printf "%b%b" "$BOLD" "$C_JEWEL_L4"
+    osc8_link "$branch" "$_branch_url"
+    printf "%b" "$R"
   else
-    gradient_text "$branch"
+    printf "%b%b%s%b" "$BOLD" "$C_JEWEL_L4" "$branch" "$R"
   fi
-  printf "%b" "$R"
 
   # Unsynced commits
   if [ "$unsynced" -gt 0 ] 2>/dev/null; then
@@ -1017,12 +954,14 @@ if [ -n "$branch" ]; then
   # Commit hash with glyph
   [ -n "$commit_hash" ] && printf "%b\xe2\x8a\x99 %s%b" "$C_MUTED" "$commit_hash" "$R"   # ⊙ hash
 
-  # col2 → col3: changes (always bridge, content may be empty)
+  # col2 → col3: changes (always shows +N -M)
   print_bridge $(( mx2 - _l4_ml_w + 1 ))
   if [ "$git_insertions" -gt 0 ] 2>/dev/null || [ "$git_deletions" -gt 0 ] 2>/dev/null; then
     [ "$git_insertions" -gt 0 ] 2>/dev/null && printf "%b+%s%b" "$C_GREEN" "$git_insertions" "$R"
     [ "$git_insertions" -gt 0 ] 2>/dev/null && [ "$git_deletions" -gt 0 ] 2>/dev/null && printf " "
     [ "$git_deletions" -gt 0 ] 2>/dev/null && printf "%b-%s%b" "$C_RED" "$git_deletions" "$R"
+  else
+    printf "%b+0 -0%b" "$C_MUTED" "$R"
   fi
 
   # col3 → col4: staged/unstaged — always show unstaged
