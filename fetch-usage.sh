@@ -8,52 +8,60 @@
 # Line 4: seven_day.resets_at (raw ISO string)
 # All output is suppressed; meant to be run in background.
 #
-case "$(pwd)" in
-  */workdev/Aurrigo*) _acct=".claude-aurrigo" ;;
-  *)                  _acct=".claude" ;;
-esac
+# Resolve account config directory:
+# 1. CLAUDE_CONFIG_DIR (set by shell function) is authoritative
+# 2. Workspace path heuristic as fallback
+if [ -n "$CLAUDE_CONFIG_DIR" ]; then
+  _config_dir="$CLAUDE_CONFIG_DIR"
+else
+  case "$(pwd)" in
+    */workdev/Aurrigo*) _config_dir="$HOME/.claude-aurrigo" ;;
+    *)                  _config_dir="$HOME/.claude" ;;
+  esac
+fi
+_acct=$(basename "$_config_dir")
 CACHE_FILE="/tmp/.claude_usage_cache_${_acct}"
 TOKEN_CACHE="/tmp/.claude_token_cache_${_acct}"
-CREDS_FILE="$HOME/${_acct}/.credentials.json"
-TOKEN_TTL=900  # 15 minutes
+CREDS_FILE="${_config_dir}/.credentials.json"
+TOKEN_TTL=900 # 15 minutes
 
 # --- get token (with 15-min cache to avoid repeated credential reads) ---
 token=""
 if [ -f "$TOKEN_CACHE" ]; then
-  cache_age=$(( $(date -u +%s) - $(stat -c %Y "$TOKEN_CACHE" 2>/dev/null || stat -f %m "$TOKEN_CACHE" 2>/dev/null || echo 0) ))
-  if [ "$cache_age" -lt "$TOKEN_TTL" ]; then
-    token=$(cat "$TOKEN_CACHE" 2>/dev/null)
-  fi
+    cache_age=$(($(date -u +%s) - $(stat -c %Y "$TOKEN_CACHE" 2>/dev/null || stat -f %m "$TOKEN_CACHE" 2>/dev/null || echo 0)))
+    if [ "$cache_age" -lt "$TOKEN_TTL" ]; then
+        token=$(cat "$TOKEN_CACHE" 2>/dev/null)
+    fi
 fi
 
 if [ -z "$token" ]; then
-  if [ ! -f "$CREDS_FILE" ]; then
-    exit 0
-  fi
-  token=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDS_FILE" 2>/dev/null)
-  if [ -z "$token" ]; then
-    exit 0
-  fi
-  printf '%s' "$token" > "$TOKEN_CACHE"
-  chmod 600 "$TOKEN_CACHE"
+    if [ ! -f "$CREDS_FILE" ]; then
+        exit 0
+    fi
+    token=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDS_FILE" 2>/dev/null)
+    if [ -z "$token" ]; then
+        exit 0
+    fi
+    printf '%s' "$token" >"$TOKEN_CACHE"
+    chmod 600 "$TOKEN_CACHE"
 fi
 
 usage_json=$(curl -s -m 3 \
-  -H "accept: application/json" \
-  -H "anthropic-beta: oauth-2025-04-20" \
-  -H "authorization: Bearer $token" \
-  -H "user-agent: claude-code/2.1.11" \
-  "https://api.anthropic.com/oauth/usage" 2>/dev/null)
+    -H "accept: application/json" \
+    -H "anthropic-beta: oauth-2025-04-20" \
+    -H "authorization: Bearer $token" \
+    -H "user-agent: claude-code/2.1.11" \
+    "https://api.anthropic.com/oauth/usage" 2>/dev/null)
 
 if [ -z "$usage_json" ]; then
-  exit 0
+    exit 0
 fi
 
 # Detect auth errors (expired/invalid token) — purge token cache so next run re-reads credentials
 _err_type=$(printf '%s' "$usage_json" | jq -r '.error.type // empty' 2>/dev/null)
 if [ "$_err_type" = "authentication_error" ]; then
-  rm -f "$TOKEN_CACHE"
-  exit 0
+    rm -f "$TOKEN_CACHE"
+    exit 0
 fi
 
 five_h_raw=$(printf '%s' "$usage_json" | jq -r '.five_hour.utilization // empty' 2>/dev/null)
@@ -62,7 +70,7 @@ five_h_reset=$(printf '%s' "$usage_json" | jq -r '.five_hour.resets_at // ""' 2>
 seven_d_reset=$(printf '%s' "$usage_json" | jq -r '.seven_day.resets_at // ""' 2>/dev/null)
 
 if [ -n "$five_h_raw" ] && [ -n "$seven_d_raw" ]; then
-  five_h=$(printf "%.0f" "$five_h_raw")
-  seven_d=$(printf "%.0f" "$seven_d_raw")
-  printf '%s\n%s\n%s\n%s\n' "$five_h" "$seven_d" "$five_h_reset" "$seven_d_reset" > "$CACHE_FILE"
+    five_h=$(printf "%.0f" "$five_h_raw")
+    seven_d=$(printf "%.0f" "$seven_d_raw")
+    printf '%s\n%s\n%s\n%s\n' "$five_h" "$seven_d" "$five_h_reset" "$seven_d_reset" >"$CACHE_FILE"
 fi
