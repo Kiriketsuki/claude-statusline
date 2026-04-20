@@ -131,12 +131,20 @@ HEADER
         fi
       fi
     else
+      # Find footer --- (must be AFTER frontmatter, i.e., after line 10)
       local _footer_line
-      _footer_line=$(grep -n "^---$" "$DAILY_NOTE" | tail -1 | cut -d: -f1 || true)
+      _footer_line=$(awk 'NR > 10 && /^---$/ {print NR; exit}' "$DAILY_NOTE" || true)
       if [ -n "$_footer_line" ]; then
         sed -i "${_footer_line}i\\\\n## Session Costs\\n${_cost_line}" "$DAILY_NOTE"
       else
-        printf "\n## Session Costs\n%s\n" "$_cost_line" >> "$DAILY_NOTE"
+        # No footer found — append before authorship line or at end
+        local _author_line
+        _author_line=$(grep -n "^\*Authored by:" "$DAILY_NOTE" | tail -1 | cut -d: -f1 || true)
+        if [ -n "$_author_line" ]; then
+          sed -i "${_author_line}i\\\\n## Session Costs\\n${_cost_line}\\n---" "$DAILY_NOTE"
+        else
+          printf "\n## Session Costs\n%s\n" "$_cost_line" >> "$DAILY_NOTE"
+        fi
       fi
     fi
 
